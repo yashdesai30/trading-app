@@ -1,0 +1,10 @@
+growwapi>=1.5.0
+certifi>=2024.0.0
+python-dotenv>=1.0.0
+flask>=3.0
+flask-socketio>=5.3
+eventlet>=0.33
+gunicorn>=3.0
+pyotp>=2.9.0
+google-auth>=2.0.0
+google-api-python-client>=2.0.0

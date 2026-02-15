@@ -1,0 +1,27 @@
+# Render Blueprint: deploy this repo and Render will create the web service.
+# After connecting the repo, add GROWW_ACCESS_TOKEN (or GROWW_API_KEY + GROWW_TOTP_SECRET / GROWW_API_SECRET) in Dashboard → Environment.
+
+services:
+  - type: web
+    name: sensex-nifty-ratio
+    runtime: python
+    plan: free
+
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --worker-class eventlet -w 1 server:app
+
+    envVars:
+      - key: GROWW_ACCESS_TOKEN
+        sync: false
+      - key: GROWW_API_KEY
+        sync: false
+      - key: GROWW_API_SECRET
+        sync: false
+      - key: GROWW_TOTP_SECRET
+        sync: false
+      - key: REFRESH_SECRET
+        sync: false
+      - key: NIFTY_FUT_EXCHANGE_TOKEN
+        sync: false
+      - key: SENSEX_FUT_EXCHANGE_TOKEN
+        sync: false

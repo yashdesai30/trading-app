@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Refresh token – Sensex / Nifty</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 1rem; background: #1a1a2e; color: #eee; min-height: 100vh; }
+    h1 { font-size: 1.25rem; margin: 0 0 1rem 0; }
+    .card { background: #16213e; border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+    .error { background: #5c2a2a; color: #f88; padding: 0.5rem; border-radius: 8px; margin-bottom: 1rem; }
+    a.btn { display: inline-block; background: #4ecdc4; color: #1a1a2e; padding: 0.75rem 1.25rem; border-radius: 8px; text-decoration: none; font-weight: 600; margin: 0.5rem 0; }
+    a.btn:hover { opacity: 0.9; }
+    label { display: block; margin: 0.5rem 0 0.2rem 0; color: #b0b0b0; font-size: 0.9rem; }
+    input[type="text"], input[type="password"] { width: 100%; padding: 0.6rem; border-radius: 8px; border: 1px solid #333; background: #0f0f1a; color: #eee; font-size: 1rem; }
+    button { margin-top: 1rem; padding: 0.6rem 1.25rem; background: #4ecdc4; color: #1a1a2e; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 1rem; }
+    .hint { font-size: 0.85rem; color: #888; margin-top: 1rem; }
+    .back { margin-top: 1rem; }
+    .back a { color: #4ecdc4; }
+  </style>
+</head>
+<body>
+  <h1>Refresh Groww access token</h1>
+  <p>Use this page to regenerate the daily Groww API token when using API Key + Secret (after approving the key at Groww).</p>
+
+  {% if request.args.get('error') %}
+  <p class="error">
+    {% if request.args.get('error') == 'exchange_failed' %}Could not get a new token. Approve your key at Groww and try again.{% endif %}
+  </p>
+  {% endif %}
+  {% if error %}
+  <p class="error">{{ error }}</p>
+  {% endif %}
+
+  <div class="card">
+    <h2 style="margin: 0 0 0.5rem 0; font-size: 1rem;">Option 1: Regenerate token (API Key + Secret)</h2>
+    <p class="hint">Set <strong>GROWW_API_KEY</strong> and <strong>GROWW_API_SECRET</strong> in your environment. Approve the key for today at <a href="https://groww.in/trade-api/api-keys" target="_blank" rel="noopener">Groww Cloud API Keys</a>, then click below.</p>
+    <form method="post" action="{{ url_for('token_page') }}">
+      {% if require_password %}
+      <label for="secret">Password</label>
+      <input type="password" id="secret" name="secret" placeholder="Refresh password" required>
+      {% endif %}
+      <button type="submit">Regenerate token</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2 style="margin: 0 0 0.5rem 0; font-size: 1rem;">Option 2: Use TOTP (no daily expiry)</h2>
+    <p class="hint">Set <strong>GROWW_API_KEY</strong> and <strong>GROWW_TOTP_SECRET</strong> in your environment. The app will generate a token at startup; no need to refresh daily.</p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin: 0 0 0.5rem 0; font-size: 1rem;">Option 3: Set token manually</h2>
+    <p class="hint">Generate an access token from your <a href="https://groww.in/user/profile/trading-apis" target="_blank" rel="noopener">Groww Trading APIs</a> profile and set <strong>GROWW_ACCESS_TOKEN</strong> in your environment. Token expires daily at 6:00 AM.</p>
+  </div>
+
+  <p class="back"><a href="{{ url_for('index') }}">← Back to dashboard</a></p>
+</body>
+</html>
