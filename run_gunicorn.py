@@ -12,7 +12,7 @@ sys.argv = [
     "--bind", f"0.0.0.0:{port}",
     "--worker-class", "gthread",
     "-w", "1",
-    "--threads", "4",
+    "--threads", "20",
     "--timeout", "120",
     "wsgi:application",
 ]
