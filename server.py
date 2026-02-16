@@ -49,8 +49,8 @@ GROWW_API_SECRET = os.getenv("GROWW_API_SECRET", "").strip()
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "sensex-nifty-secret"
-# Use threading so server responds when eventlet is present; avoids monkey-patch issues
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+# Use eventlet async mode to match the Gunicorn eventlet worker
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 # Gunicorn + eventlet: must serve this so WebSocket works (Render/production)
 application = socketio
 
@@ -356,4 +356,5 @@ if __name__ == "__main__":
     print(f"  Starting server on port {port}...\n")
     socketio.run(app, host="0.0.0.0", port=port, allow_unsafe_werkzeug=True)
 else:
-    start_ticker()
+    # Delay feed startup so the Gunicorn worker finishes booting first.
+    eventlet.spawn_after(3, start_ticker)
