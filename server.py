@@ -229,14 +229,21 @@ def _get_access_token() -> str:
     return _current_access_token if _current_access_token is not None else ACCESS_TOKEN
 
 
+def _log_feed(msg: str) -> None:
+    """Log to stderr so it shows in Render logs (stdout can be buffered/captured)."""
+    print(f"[feed] {msg}", file=sys.stderr, flush=True)
+
+
 def _run_feed() -> None:
     global _feed
     try:
-        print("Groww feed: starting...", flush=True)
+        _log_feed("starting...")
         token = _get_access_token()
+        _log_feed("token ok, creating API...")
         groww = GrowwAPI(token)
         feed = GrowwFeed(groww)
         _feed = feed
+        _log_feed("Feed created, subscribing index_value...")
 
         def callback(meta: dict) -> None:
             try:
@@ -246,12 +253,13 @@ def _run_feed() -> None:
                 print(f"Feed callback error: {e}", file=sys.stderr, flush=True)
 
         feed.subscribe_index_value(INDEX_INSTRUMENTS, on_data_received=callback)
+        _log_feed("subscribed index_value, subscribing LTP...")
         feed.subscribe_ltp(FUT_INSTRUMENTS, on_data_received=callback)
-        print("Groww feed: subscribed, consuming...", flush=True)
+        _log_feed("subscribed LTP, consuming...")
         feed.consume()
     except Exception as e:
         msg = str(e).strip() or repr(e)
-        print(f"Groww feed error: {msg}", file=sys.stderr, flush=True)
+        _log_feed(f"error: {msg}")
         traceback.print_exc(file=sys.stderr)
         raise
 
@@ -260,7 +268,7 @@ def start_ticker() -> None:
     global _feed_thread
     if _feed_thread is not None and _feed_thread.is_alive():
         return
-    print("Groww feed: starting background thread.", flush=True)
+    _log_feed("starting background thread")
     _feed_thread = threading.Thread(target=_run_feed, daemon=True)
     _feed_thread.start()
 
