@@ -195,21 +195,49 @@ def _resolve_fut_tokens() -> tuple[str, list[dict]]:
     rows = _load_instruments_csv()
     nifty = nifty_env or _resolve_nearest_fut(rows, ["NIFTY"], "NSE")
     sensex_instruments: list[dict] = []
+    # Broader prefixes: SENSEX on NSE may use BSX, BSXFUT, etc.
+    sensex_prefixes = ["SENSEX", "BFSENSEX", "BSX"]
     if sensex_env:
         ex = sensex_exchange_env or "NSE"
         sensex_instruments.append({"exchange": ex, "segment": "FNO", "exchange_token": sensex_env})
     else:
+        # Log all Sensex-like FUT symbols to help diagnose
+        _debug_sensex_symbols(rows, sensex_prefixes)
         for exchange in ("NSE", "BSE"):
             try:
-                token = _resolve_nearest_fut(rows, ["SENSEX", "BFSENSEX"], exchange)
+                token = _resolve_nearest_fut(rows, sensex_prefixes, exchange)
                 sensex_instruments.append({"exchange": exchange, "segment": "FNO", "exchange_token": token})
+                print(f"[config] Resolved Sensex futures on {exchange}: token={token}", flush=True)
             except RuntimeError:
-                pass
+                print(f"[config] No Sensex futures found on {exchange}", flush=True)
         if not sensex_instruments:
             raise RuntimeError(
                 "Could not resolve SENSEX futures on NSE or BSE. Set SENSEX_FUT_EXCHANGE_TOKEN in your environment."
             )
     return nifty, sensex_instruments
+
+
+def _debug_sensex_symbols(rows: list[dict], prefixes: list[str]) -> None:
+    """Log all Sensex-like futures symbols found in the CSV for debugging."""
+    today = date.today()
+    for row in rows:
+        seg = row.get("segment", "")
+        if seg != "FNO":
+            continue
+        sym = (row.get("trading_symbol") or "").strip()
+        if "FUT" not in sym.upper():
+            continue
+        # Check broader match: any symbol containing "SENSEX" or "BSX"
+        sym_upper = sym.upper()
+        if any(p.upper() in sym_upper for p in ["SENSEX", "BSX"]):
+            exp = _parse_expiry(row.get("expiry_date"))
+            expired = exp is not None and exp < today
+            print(
+                f"[config] CSV: {row.get('exchange')}/{seg} "
+                f"sym={sym} token={row.get('exchange_token')} "
+                f"expiry={row.get('expiry_date')} {'(EXPIRED)' if expired else ''}",
+                flush=True,
+            )
 
 
 NIFTY_FUT_EXCHANGE_TOKEN, SENSEX_FUT_INSTRUMENTS = _resolve_fut_tokens()

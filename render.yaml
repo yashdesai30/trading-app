@@ -25,3 +25,5 @@ services:
         sync: false
       - key: SENSEX_FUT_EXCHANGE_TOKEN
         sync: false
+      - key: PORT
+        value: 10000

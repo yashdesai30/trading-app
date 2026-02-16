@@ -139,6 +139,16 @@ def _extract_sensex_ltp(data: dict | None) -> float | None:
         val = _extract_ltp(data, inst)
         if val is not None:
             return val
+    # Debug: log what the feed is sending so we can diagnose missing data
+    for inst in SENSEX_FUT_INSTRUMENTS:
+        ex_data = data.get(inst["exchange"]) or {}
+        seg_data = ex_data.get(inst["segment"]) or {}
+        _log_feed(
+            f"sensex_ltp=None for {inst}, "
+            f"segments={list(ex_data.keys())}, "
+            f"tokens_in_{inst['segment']}={list(seg_data.keys())[:10]}, "
+            f"raw_seg={dict(list(seg_data.items())[:3])}"
+        )
     return None
 
 
@@ -185,7 +195,16 @@ def _extract_ltp(data: dict | None, instrument: dict) -> float | None:
         return None
     try:
         ex = data.get(instrument["exchange"]) or {}
-        seg = ex.get(instrument["segment"]) or {}
+        # The instruments CSV uses "FNO" for both NSE and BSE, but the
+        # Groww feed may key BSE derivatives under "BFO" (BSE F&O).
+        segment = instrument["segment"]
+        _SEGMENT_ALIASES = {"FNO": ["FNO", "BFO", "NFO"], "BFO": ["BFO", "FNO"]}
+        segments_to_try = _SEGMENT_ALIASES.get(segment, [segment])
+        seg: dict = {}
+        for s in segments_to_try:
+            seg = ex.get(s) or {}
+            if seg:
+                break
         token_key = instrument["exchange_token"]
         # SDK may key by str or int
         tok = seg.get(token_key) or seg.get(str(token_key))
@@ -268,6 +287,7 @@ def start_ticker() -> None:
     if _feed_thread is not None and _feed_thread.is_alive():
         return
     _log_feed("starting background thread")
+    _log_feed(f"FUT_INSTRUMENTS={FUT_INSTRUMENTS}")
     _feed_thread = threading.Thread(target=_run_feed, daemon=True)
     _feed_thread.start()
 
