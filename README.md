@@ -326,7 +326,13 @@ This project includes a **Render Blueprint** (`render.yaml`):
 
 **Refreshing the token:** Open `/token` in the app. If **GROWW_API_KEY** and **GROWW_API_SECRET** are set in Render’s Environment, approve the key for today at [Groww API Keys](https://groww.in/trade-api/api-keys), then click **Regenerate token** on `/token`. Optional: set **REFRESH_SECRET** to require a password for that button.
 
-Manual setup: **Build command** `pip install -r requirements.txt`, **Start command** `gunicorn --bind 0.0.0.0:$PORT --worker-class eventlet -w 1 server:app`, and the same env vars.
+Manual setup: **Build command** `pip install -r requirements.txt`, **Start command** `gunicorn --bind 0.0.0.0:$PORT --worker-class eventlet -w 1 server:application`, and the same env vars. (Use `server:application` so WebSocket works.)
+
+**If the dashboard shows "Connected, waiting for data..." but no numbers:**  
+1. In Render → your service → **Environment**, ensure **GROWW_ACCESS_TOKEN** (or **GROWW_API_KEY** + **GROWW_TOTP_SECRET** / **GROWW_API_SECRET**) is set.  
+2. If using **GROWW_ACCESS_TOKEN**, it expires daily; refresh via `/token` or update the env var.  
+3. Open **Logs** in Render and look for `Groww feed: starting...` and any `Groww feed error:` line.  
+4. On the free tier, the service can take 30–60 seconds to wake up; wait and refresh once.
 
 #### Alternative: Railway
 

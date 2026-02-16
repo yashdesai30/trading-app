@@ -8,7 +8,7 @@ services:
     plan: free
 
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --worker-class eventlet -w 1 server:app
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --worker-class eventlet -w 1 server:application
 
     envVars:
       - key: GROWW_ACCESS_TOKEN

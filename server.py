@@ -4,8 +4,14 @@ Uses Groww Trade API for live index and futures data.
 Token: set GROWW_ACCESS_TOKEN in env, or use GROWW_API_KEY + GROWW_TOTP_SECRET (no expiry).
 Refresh: update GROWW_ACCESS_TOKEN in env when it expires, or use /token to regenerate via API key+secret.
 """
-
 from __future__ import annotations
+
+# Eventlet worker: patch before other imports so RLock etc. are greened
+try:
+    import eventlet
+    eventlet.monkey_patch()
+except ImportError:
+    pass
 
 import json
 import os
@@ -45,6 +51,8 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = "sensex-nifty-secret"
 # Use threading so server responds when eventlet is present; avoids monkey-patch issues
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+# Gunicorn + eventlet: must serve this so WebSocket works (Render/production)
+application = socketio
 
 state: dict[str, Any] = {
     "nifty_fut": None,
@@ -224,6 +232,7 @@ def _get_access_token() -> str:
 def _run_feed() -> None:
     global _feed
     try:
+        print("Groww feed: starting...", flush=True)
         token = _get_access_token()
         groww = GrowwAPI(token)
         feed = GrowwFeed(groww)
@@ -238,11 +247,12 @@ def _run_feed() -> None:
 
         feed.subscribe_index_value(INDEX_INSTRUMENTS, on_data_received=callback)
         feed.subscribe_ltp(FUT_INSTRUMENTS, on_data_received=callback)
+        print("Groww feed: subscribed, consuming...", flush=True)
         feed.consume()
     except Exception as e:
-        # Groww SDK sometimes raises/logs errors with empty message; show type and args
         msg = str(e).strip() or repr(e)
-        print(f"Groww feed error: {msg}", flush=True)
+        print(f"Groww feed error: {msg}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
         raise
 
 
@@ -250,6 +260,7 @@ def start_ticker() -> None:
     global _feed_thread
     if _feed_thread is not None and _feed_thread.is_alive():
         return
+    print("Groww feed: starting background thread.", flush=True)
     _feed_thread = threading.Thread(target=_run_feed, daemon=True)
     _feed_thread.start()
 
