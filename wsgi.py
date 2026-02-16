@@ -1,8 +1,4 @@
-# Gunicorn entry point: run eventlet.monkey_patch() before any other imports.
-# Must be the first executable lines so RLock etc. are greened.
-import eventlet
-eventlet.monkey_patch()
-
+# Gunicorn entry point (used with gthread worker; see run_gunicorn.py).
 from server import app
 
 # Flask app is the WSGI callable; SocketIO is mounted on it.
