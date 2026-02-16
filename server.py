@@ -241,6 +241,7 @@ def _run_feed() -> None:
         token = _get_access_token()
         _log_feed("token ok, creating API...")
         groww = GrowwAPI(token)
+        _log_feed("API created, creating Feed...")
         feed = GrowwFeed(groww)
         _feed = feed
         _log_feed("Feed created, subscribing index_value...")

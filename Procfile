@@ -1,1 +1,1 @@
-web: gunicorn --bind 0.0.0.0:$PORT --worker-class eventlet -w 1 wsgi:application
+web: python run_gunicorn.py
