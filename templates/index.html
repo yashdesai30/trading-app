@@ -49,20 +49,6 @@
       min-width: 5ch;
       text-align: right;
     }
-    .counters {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 0.5rem;
-      margin-top: 1rem;
-    }
-    .counter {
-      background: rgba(0,0,0,0.2);
-      border-radius: 8px;
-      padding: 0.6rem;
-      text-align: center;
-    }
-    .counter .num { font-size: 1.4rem; font-weight: 700; color: #4ecdc4; }
-    .counter .desc { font-size: 0.75rem; color: #888; }
     .status {
       text-align: center;
       font-size: 0.8rem;
@@ -90,16 +76,6 @@
     <div class="row"><span class="label">CASH RATIO (SENSEX / NIFTY)</span><span class="value" id="cash_ratio">--</span></div>
   </div>
 
-  <div class="card">
-    <h2>Crossing counts</h2>
-    <div class="counters">
-      <div class="counter"><div class="num" id="fut_below_325">0</div><div class="desc">FUT below 3.25</div></div>
-      <div class="counter"><div class="num" id="fut_above_326">0</div><div class="desc">FUT above 3.26</div></div>
-      <div class="counter"><div class="num" id="cash_below_325">0</div><div class="desc">CASH below 3.25</div></div>
-      <div class="counter"><div class="num" id="cash_above_326">0</div><div class="desc">CASH above 3.26</div></div>
-    </div>
-  </div>
-
   <p class="status connecting" id="status">Connecting…</p>
   <p style="text-align: center; margin-top: 0.5rem; font-size: 0.9rem;">
     <a href="/token" style="color: #4ecdc4;">Refresh token</a> (daily, from phone or desktop)
@@ -110,8 +86,7 @@
   <script>
     const ids = [
       'nifty_fut', 'sensex_fut', 'fut_ratio',
-      'nifty_cash', 'sensex_cash', 'cash_ratio',
-      'fut_below_325', 'fut_above_326', 'cash_below_325', 'cash_above_326'
+      'nifty_cash', 'sensex_cash', 'cash_ratio'
     ];
 
     function fmt(v) {

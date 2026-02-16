@@ -181,33 +181,39 @@ def _resolve_nearest_fut(
     return str(candidates[0][1])
 
 
-def _resolve_fut_tokens() -> tuple[str, str]:
-    """Resolve Nifty and Sensex futures exchange_tokens (env override or from CSV)."""
+def _resolve_fut_tokens() -> tuple[str, list[dict]]:
+    """Resolve Nifty and Sensex futures. Returns (nifty_token, list of Sensex instruments).
+    Sensex can be on NSE and/or BSE; we subscribe to both so we get data from whichever the feed sends."""
     nifty_env = _env_str("NIFTY_FUT_EXCHANGE_TOKEN")
     sensex_env = _env_str("SENSEX_FUT_EXCHANGE_TOKEN")
+    sensex_exchange_env = _env_str("SENSEX_FUT_EXCHANGE")  # optional: NSE or BSE
+
     if nifty_env and sensex_env:
-        return nifty_env, sensex_env
+        ex = sensex_exchange_env or "NSE"
+        return nifty_env, [{"exchange": ex, "segment": "FNO", "exchange_token": sensex_env}]
 
     rows = _load_instruments_csv()
     nifty = nifty_env or _resolve_nearest_fut(rows, ["NIFTY"], "NSE")
+    sensex_instruments: list[dict] = []
     if sensex_env:
-        sensex = sensex_env
+        ex = sensex_exchange_env or "NSE"
+        sensex_instruments.append({"exchange": ex, "segment": "FNO", "exchange_token": sensex_env})
     else:
-        try:
-            sensex = _resolve_nearest_fut(rows, ["SENSEX", "BFSENSEX"], "NSE")
-        except RuntimeError:
+        for exchange in ("NSE", "BSE"):
             try:
-                sensex = _resolve_nearest_fut(rows, ["SENSEX", "BFSENSEX"], "BSE")
-            except RuntimeError as e:
-                raise RuntimeError(
-                    "Could not resolve SENSEX futures. Set SENSEX_FUT_EXCHANGE_TOKEN in your environment."
-                ) from e
-    return nifty, sensex
+                token = _resolve_nearest_fut(rows, ["SENSEX", "BFSENSEX"], exchange)
+                sensex_instruments.append({"exchange": exchange, "segment": "FNO", "exchange_token": token})
+            except RuntimeError:
+                pass
+        if not sensex_instruments:
+            raise RuntimeError(
+                "Could not resolve SENSEX futures on NSE or BSE. Set SENSEX_FUT_EXCHANGE_TOKEN in your environment."
+            )
+    return nifty, sensex_instruments
 
 
-NIFTY_FUT_EXCHANGE_TOKEN, SENSEX_FUT_EXCHANGE_TOKEN = _resolve_fut_tokens()
+NIFTY_FUT_EXCHANGE_TOKEN, SENSEX_FUT_INSTRUMENTS = _resolve_fut_tokens()
 
 NIFTY_FUT_INSTRUMENT = {"exchange": "NSE", "segment": "FNO", "exchange_token": NIFTY_FUT_EXCHANGE_TOKEN}
-SENSEX_FUT_INSTRUMENT = {"exchange": "NSE", "segment": "FNO", "exchange_token": SENSEX_FUT_EXCHANGE_TOKEN}
 INDEX_INSTRUMENTS = [NIFTY_INDEX, SENSEX_INDEX]
-FUT_INSTRUMENTS = [NIFTY_FUT_INSTRUMENT, SENSEX_FUT_INSTRUMENT]
+FUT_INSTRUMENTS = [NIFTY_FUT_INSTRUMENT] + SENSEX_FUT_INSTRUMENTS

@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import time
+import traceback
 from typing import Any
 
 from dotenv import load_dotenv
@@ -28,7 +30,7 @@ from config import (
     NIFTY_INDEX,
     SENSEX_INDEX,
     NIFTY_FUT_INSTRUMENT,
-    SENSEX_FUT_INSTRUMENT,
+    SENSEX_FUT_INSTRUMENTS,
 )
 
 _current_access_token: str | None = None
@@ -41,10 +43,8 @@ GROWW_API_SECRET = os.getenv("GROWW_API_SECRET", "").strip()
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "sensex-nifty-secret"
-socketio = SocketIO(app, cors_allowed_origins="*")
-
-LOW = 3.25
-HIGH = 3.26
+# Use threading so server responds when eventlet is present; avoids monkey-patch issues
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 state: dict[str, Any] = {
     "nifty_fut": None,
@@ -53,14 +53,7 @@ state: dict[str, Any] = {
     "nifty_cash": None,
     "sensex_cash": None,
     "cash_ratio": None,
-    "fut_below_325": 0,
-    "fut_above_326": 0,
-    "cash_below_325": 0,
-    "cash_above_326": 0,
 }
-
-prev_fut_ratio: float | None = None
-prev_cash_ratio: float | None = None
 
 # Google Sheets live push (optional)
 _sheets_last_push: float = 0
@@ -95,7 +88,7 @@ def _push_state_to_sheets() -> None:
             else:
                 return
             service = build("sheets", "v4", credentials=creds)
-            range_name = os.getenv("GOOGLE_SHEET_RANGE", "Sheet1!A1:B11").strip()
+            range_name = os.getenv("GOOGLE_SHEET_RANGE", "Sheet1!A1:B7").strip()
             values = [
                 ["Metric", "Value"],
                 ["Nifty Fut", state.get("nifty_fut") or ""],
@@ -104,10 +97,6 @@ def _push_state_to_sheets() -> None:
                 ["Nifty Cash", state.get("nifty_cash") or ""],
                 ["Sensex Cash", state.get("sensex_cash") or ""],
                 ["Cash Ratio", state.get("cash_ratio") or ""],
-                ["Fut below 3.25", state.get("fut_below_325", 0)],
-                ["Fut above 3.26", state.get("fut_above_326", 0)],
-                ["Cash below 3.25", state.get("cash_below_325", 0)],
-                ["Cash above 3.26", state.get("cash_above_326", 0)],
             ]
             body = {"values": values}
             service.spreadsheets().values().update(
@@ -131,69 +120,98 @@ def _broadcast_state() -> None:
         "nifty_cash": state["nifty_cash"],
         "sensex_cash": state["sensex_cash"],
         "cash_ratio": state["cash_ratio"],
-        "fut_below_325": state["fut_below_325"],
-        "fut_above_326": state["fut_above_326"],
-        "cash_below_325": state["cash_below_325"],
-        "cash_above_326": state["cash_above_326"],
     }
     socketio.emit("state", payload)
     _push_state_to_sheets()
 
 
+def _extract_sensex_ltp(data: dict | None) -> float | None:
+    """Extract Sensex LTP from first instrument that has data (NSE or BSE)."""
+    if data is None:
+        return None
+    for inst in SENSEX_FUT_INSTRUMENTS:
+        val = _extract_ltp(data, inst)
+        if val is not None:
+            return val
+    return None
+
+
 def _on_feed_data(meta: dict, feed: GrowwFeed) -> None:
-    global prev_fut_ratio, prev_cash_ratio
-    feed_type = meta.get("feed_type", "")
+    if meta is None or not isinstance(meta, dict):
+        return
+    feed_type = (meta.get("feed_type") or meta.get("feedType") or "").strip()
 
     if feed_type == "ltp":
         ltp_data = feed.get_ltp()
+        if ltp_data is None:
+            return
         nf = _extract_ltp(ltp_data, NIFTY_FUT_INSTRUMENT)
-        sf = _extract_ltp(ltp_data, SENSEX_FUT_INSTRUMENT)
-        if nf is not None and sf is not None:
-            fut_ratio = sf / nf
+        sf = _extract_sensex_ltp(ltp_data)
+        updated = False
+        if nf is not None:
             state["nifty_fut"] = round(nf, 2)
+            updated = True
+        if sf is not None:
             state["sensex_fut"] = round(sf, 2)
-            state["fut_ratio"] = round(fut_ratio, 4)
-            if prev_fut_ratio is not None:
-                if prev_fut_ratio >= LOW and fut_ratio < LOW:
-                    state["fut_below_325"] += 1
-                if prev_fut_ratio <= HIGH and fut_ratio > HIGH:
-                    state["fut_above_326"] += 1
-            prev_fut_ratio = fut_ratio
+            updated = True
+        if nf is not None and sf is not None:
+            state["fut_ratio"] = round(sf / nf, 4)
+            updated = True
+        if updated:
             _broadcast_state()
 
     if feed_type == "index_value":
         idx_data = feed.get_index_value()
+        if idx_data is None:
+            return
         nc = _extract_index_value(idx_data, NIFTY_INDEX)
         sc = _extract_index_value(idx_data, SENSEX_INDEX)
         if nc is not None and sc is not None:
-            cash_ratio = sc / nc
             state["nifty_cash"] = round(nc, 2)
             state["sensex_cash"] = round(sc, 2)
-            state["cash_ratio"] = round(cash_ratio, 4)
-            if prev_cash_ratio is not None:
-                if prev_cash_ratio >= LOW and cash_ratio < LOW:
-                    state["cash_below_325"] += 1
-                if prev_cash_ratio <= HIGH and cash_ratio > HIGH:
-                    state["cash_above_326"] += 1
-            prev_cash_ratio = cash_ratio
+            state["cash_ratio"] = round(sc / nc, 4)
             _broadcast_state()
 
 
-def _extract_ltp(data: dict, instrument: dict) -> float | None:
+def _extract_ltp(data: dict | None, instrument: dict) -> float | None:
+    """Extract LTP from feed.get_ltp() result: exchange -> segment -> exchange_token -> {ltp}."""
+    if data is None:
+        return None
     try:
-        ex = data.get("ltp", {}).get(instrument["exchange"], {})
-        seg = ex.get(instrument["segment"], {})
-        tok = seg.get(instrument["exchange_token"], {})
-        return float(tok.get("ltp"))
+        ex = data.get(instrument["exchange"]) or {}
+        seg = ex.get(instrument["segment"]) or {}
+        token_key = instrument["exchange_token"]
+        # SDK may key by str or int
+        tok = seg.get(token_key) or seg.get(str(token_key))
+        if tok is None and str(token_key).isdigit():
+            tok = seg.get(int(token_key))
+        if tok is None:
+            return None
+        # Value may be a number directly (e.g. BSE feed)
+        if isinstance(tok, (int, float)):
+            return float(tok)
+        if not isinstance(tok, dict):
+            return None
+        # Proto may use ltp, lastPrice, last_price, last, close
+        price = (
+            tok.get("ltp")
+            or tok.get("lastPrice")
+            or tok.get("last_price")
+            or tok.get("last")
+            or tok.get("close")
+        )
+        return float(price) if price is not None else None
     except (TypeError, KeyError, ValueError):
         return None
 
 
-def _extract_index_value(data: dict, instrument: dict) -> float | None:
+def _extract_index_value(data: dict | None, instrument: dict) -> float | None:
+    if data is None:
+        return None
     try:
-        ex = data.get(instrument["exchange"], {})
-        seg = ex.get(instrument["segment"], {})
-        tok = seg.get(instrument["exchange_token"], {})
+        ex = (data.get(instrument["exchange"]) or {})
+        seg = ex.get(instrument["segment"]) or {}
+        tok = seg.get(instrument["exchange_token"]) or {}
         return float(tok.get("value"))
     except (TypeError, KeyError, ValueError):
         return None
@@ -212,7 +230,11 @@ def _run_feed() -> None:
         _feed = feed
 
         def callback(meta: dict) -> None:
-            _on_feed_data(meta, feed)
+            try:
+                _on_feed_data(meta, feed)
+            except Exception as e:
+                traceback.print_exc(file=sys.stderr)
+                print(f"Feed callback error: {e}", file=sys.stderr, flush=True)
 
         feed.subscribe_index_value(INDEX_INSTRUMENTS, on_data_received=callback)
         feed.subscribe_ltp(FUT_INSTRUMENTS, on_data_received=callback)
@@ -302,10 +324,16 @@ def handle_connect() -> None:
 
 
 if __name__ == "__main__":
-    start_ticker()
-    port = int(os.environ.get("PORT", "8000"))
-    print(f"\n  Open in browser (or on your phone, same Wi‑Fi): http://0.0.0.0:{port}")
-    print(f"  On this machine: http://127.0.0.1:{port}\n")
+    port = int(os.environ.get("PORT", "8002"))
+    # Start feed after a short delay so the web server binds first and responds
+    def start_feed_delayed() -> None:
+        time.sleep(1.5)
+        start_ticker()
+    threading.Thread(target=start_feed_delayed, daemon=True).start()
+    print(f"\n  On this computer, open in browser: http://127.0.0.1:{port}")
+    print(f"  (or http://localhost:{port})")
+    print(f"  From phone (same Wi‑Fi): http://<this-PC-IP>:{port}")
+    print(f"  Starting server on port {port}...\n")
     socketio.run(app, host="0.0.0.0", port=port, allow_unsafe_werkzeug=True)
 else:
     start_ticker()
