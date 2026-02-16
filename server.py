@@ -6,12 +6,10 @@ Refresh: update GROWW_ACCESS_TOKEN in env when it expires, or use /token to rege
 """
 from __future__ import annotations
 
-# Eventlet worker: patch before other imports so RLock etc. are greened
-try:
-    import eventlet
-    eventlet.monkey_patch()
-except ImportError:
-    pass
+# NOTE: Do NOT use eventlet.monkey_patch() here.
+# The growwapi library uses asyncio / aiohttp internally, and eventlet's
+# monkey-patching breaks it.  We use Gunicorn's gthread worker instead,
+# which lets the feed run in a real OS thread with its own asyncio loop.
 
 import json
 import os
@@ -49,9 +47,9 @@ GROWW_API_SECRET = os.getenv("GROWW_API_SECRET", "").strip()
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "sensex-nifty-secret"
-# Use eventlet async mode to match the Gunicorn eventlet worker
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
-# Gunicorn + eventlet: must serve this so WebSocket works (Render/production)
+# threading mode works with gthread worker; WebSocket via simple-websocket
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+# Gunicorn gthread: SocketIO is the WSGI callable for WebSocket support
 application = socketio
 
 state: dict[str, Any] = {
