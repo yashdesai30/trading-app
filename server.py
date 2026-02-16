@@ -340,6 +340,7 @@ def token_callback() -> Any:
 
 @socketio.on("connect")
 def handle_connect() -> None:
+    start_ticker()  # ensure feed is running (no-op if already started)
     _broadcast_state()
 
 
@@ -356,5 +357,4 @@ if __name__ == "__main__":
     print(f"  Starting server on port {port}...\n")
     socketio.run(app, host="0.0.0.0", port=port, allow_unsafe_werkzeug=True)
 else:
-    # Delay feed startup so the Gunicorn worker finishes booting first.
-    eventlet.spawn_after(3, start_ticker)
+    start_ticker()
