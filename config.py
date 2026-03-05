@@ -31,6 +31,8 @@ INSTRUMENT_CSV_URL = "https://growwapi-assets.groww.in/instruments/instrument.cs
 # Index identifiers for Groww Feed (fixed: Nifty = NSE NIFTY, Sensex = BSE 1)
 NIFTY_INDEX = {"exchange": "NSE", "segment": "CASH", "exchange_token": "NIFTY"}
 SENSEX_INDEX = {"exchange": "BSE", "segment": "CASH", "exchange_token": "1"}
+BANKNIFTY_INDEX = {"exchange": "NSE", "segment": "CASH", "exchange_token": "BANKNIFTY"}
+BANKEX_INDEX = {"exchange": "BSE", "segment": "CASH", "exchange_token": "14"}
 
 
 def _require_env(name: str) -> str:
@@ -156,8 +158,8 @@ def _resolve_nearest_fut(
     rows: list[dict],
     symbol_prefixes: list[str],
     exchange: str = "NSE",
-) -> str:
-    """Return exchange_token for nearest-expiry future matching one of symbol_prefixes."""
+) -> tuple[str, str]:
+    """Return (exchange_token, trading_symbol) for nearest-expiry future matching one of symbol_prefixes."""
     today = date.today()
     candidates = []
     for row in rows:
@@ -171,18 +173,19 @@ def _resolve_nearest_fut(
             continue
         if "FUT" not in sym.upper():
             continue
-        candidates.append((exp, row.get("exchange_token", "")))
+        candidates.append((exp, row.get("exchange_token", ""), sym))
     if not candidates:
         raise RuntimeError(
             f"Could not find {symbol_prefixes} futures on {exchange}. "
             "Set NIFTY_FUT_EXCHANGE_TOKEN / SENSEX_FUT_EXCHANGE_TOKEN in your environment."
         )
     candidates.sort(key=lambda x: x[0])
-    return str(candidates[0][1])
+    return str(candidates[0][1]), candidates[0][2]
 
 
-def _resolve_fut_tokens() -> tuple[str, list[dict]]:
-    """Resolve Nifty and Sensex futures. Returns (nifty_token, list of Sensex instruments).
+def _resolve_fut_tokens() -> tuple[dict, list[dict]]:
+    """Resolve Nifty and Sensex futures. Returns (nifty_instrument, list of Sensex instruments).
+    Each instrument dict has: exchange, segment, exchange_token, trading_symbol.
     Sensex can be on NSE and/or BSE; we subscribe to both so we get data from whichever the feed sends."""
     nifty_env = _env_str("NIFTY_FUT_EXCHANGE_TOKEN")
     sensex_env = _env_str("SENSEX_FUT_EXCHANGE_TOKEN")
@@ -190,31 +193,36 @@ def _resolve_fut_tokens() -> tuple[str, list[dict]]:
 
     if nifty_env and sensex_env:
         ex = sensex_exchange_env or "NSE"
-        return nifty_env, [{"exchange": ex, "segment": "FNO", "exchange_token": sensex_env}]
+        nifty_inst = {"exchange": "NSE", "segment": "FNO", "exchange_token": nifty_env, "trading_symbol": ""}
+        return nifty_inst, [{"exchange": ex, "segment": "FNO", "exchange_token": sensex_env, "trading_symbol": ""}]
 
     rows = _load_instruments_csv()
-    nifty = nifty_env or _resolve_nearest_fut(rows, ["NIFTY"], "NSE")
+    if nifty_env:
+        nifty_inst = {"exchange": "NSE", "segment": "FNO", "exchange_token": nifty_env, "trading_symbol": ""}
+    else:
+        nifty_token, nifty_sym = _resolve_nearest_fut(rows, ["NIFTY"], "NSE")
+        nifty_inst = {"exchange": "NSE", "segment": "FNO", "exchange_token": nifty_token, "trading_symbol": nifty_sym}
     sensex_instruments: list[dict] = []
     # Broader prefixes: SENSEX on NSE may use BSX, BSXFUT, etc.
     sensex_prefixes = ["SENSEX", "BFSENSEX", "BSX"]
     if sensex_env:
         ex = sensex_exchange_env or "NSE"
-        sensex_instruments.append({"exchange": ex, "segment": "FNO", "exchange_token": sensex_env})
+        sensex_instruments.append({"exchange": ex, "segment": "FNO", "exchange_token": sensex_env, "trading_symbol": ""})
     else:
         # Log all Sensex-like FUT symbols to help diagnose
         _debug_sensex_symbols(rows, sensex_prefixes)
         for exchange in ("NSE", "BSE"):
             try:
-                token = _resolve_nearest_fut(rows, sensex_prefixes, exchange)
-                sensex_instruments.append({"exchange": exchange, "segment": "FNO", "exchange_token": token})
-                print(f"[config] Resolved Sensex futures on {exchange}: token={token}", flush=True)
+                token, sym = _resolve_nearest_fut(rows, sensex_prefixes, exchange)
+                sensex_instruments.append({"exchange": exchange, "segment": "FNO", "exchange_token": token, "trading_symbol": sym})
+                print(f"[config] Resolved Sensex futures on {exchange}: token={token} sym={sym}", flush=True)
             except RuntimeError:
                 print(f"[config] No Sensex futures found on {exchange}", flush=True)
         if not sensex_instruments:
             raise RuntimeError(
                 "Could not resolve SENSEX futures on NSE or BSE. Set SENSEX_FUT_EXCHANGE_TOKEN in your environment."
             )
-    return nifty, sensex_instruments
+    return nifty_inst, sensex_instruments
 
 
 def _debug_sensex_symbols(rows: list[dict], prefixes: list[str]) -> None:
@@ -240,8 +248,7 @@ def _debug_sensex_symbols(rows: list[dict], prefixes: list[str]) -> None:
             )
 
 
-NIFTY_FUT_EXCHANGE_TOKEN, SENSEX_FUT_INSTRUMENTS = _resolve_fut_tokens()
+NIFTY_FUT_INSTRUMENT, SENSEX_FUT_INSTRUMENTS = _resolve_fut_tokens()
 
-NIFTY_FUT_INSTRUMENT = {"exchange": "NSE", "segment": "FNO", "exchange_token": NIFTY_FUT_EXCHANGE_TOKEN}
-INDEX_INSTRUMENTS = [NIFTY_INDEX, SENSEX_INDEX]
+INDEX_INSTRUMENTS = [NIFTY_INDEX, SENSEX_INDEX, BANKNIFTY_INDEX, BANKEX_INDEX]
 FUT_INSTRUMENTS = [NIFTY_FUT_INSTRUMENT] + SENSEX_FUT_INSTRUMENTS

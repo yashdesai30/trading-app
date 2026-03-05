@@ -74,6 +74,8 @@
     <div class="row"><span class="label">NIFTY CASH</span><span class="value" id="nifty_cash">--</span></div>
     <div class="row"><span class="label">SENSEX CASH</span><span class="value" id="sensex_cash">--</span></div>
     <div class="row"><span class="label">CASH RATIO (SENSEX / NIFTY)</span><span class="value" id="cash_ratio">--</span></div>
+    <div class="row"><span class="label">BANKNIFTY CASH</span><span class="value" id="banknifty_cash">--</span></div>
+    <div class="row"><span class="label">BANKEX CASH</span><span class="value" id="bankex_cash">--</span></div>
   </div>
 
   <p class="status connecting" id="status">Connecting…</p>
@@ -86,7 +88,8 @@
   <script>
     const ids = [
       'nifty_fut', 'sensex_fut', 'fut_ratio',
-      'nifty_cash', 'sensex_cash', 'cash_ratio'
+      'nifty_cash', 'sensex_cash', 'cash_ratio',
+      'banknifty_cash', 'bankex_cash'
     ];
 
     function fmt(v) {

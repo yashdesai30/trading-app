@@ -33,6 +33,8 @@ from config import (
     FUT_INSTRUMENTS,
     NIFTY_INDEX,
     SENSEX_INDEX,
+    BANKNIFTY_INDEX,
+    BANKEX_INDEX,
     NIFTY_FUT_INSTRUMENT,
     SENSEX_FUT_INSTRUMENTS,
 )
@@ -59,6 +61,8 @@ state: dict[str, Any] = {
     "nifty_cash": None,
     "sensex_cash": None,
     "cash_ratio": None,
+    "banknifty_cash": None,
+    "bankex_cash": None,
 }
 
 # Google Sheets live push (optional)
@@ -94,7 +98,7 @@ def _push_state_to_sheets() -> None:
             else:
                 return
             service = build("sheets", "v4", credentials=creds)
-            range_name = os.getenv("GOOGLE_SHEET_RANGE", "Sheet1!A1:B7").strip()
+            range_name = os.getenv("GOOGLE_SHEET_RANGE", "Sheet1!A1:B9").strip()
             values = [
                 ["Metric", "Value"],
                 ["Nifty Fut", state.get("nifty_fut") or ""],
@@ -103,6 +107,8 @@ def _push_state_to_sheets() -> None:
                 ["Nifty Cash", state.get("nifty_cash") or ""],
                 ["Sensex Cash", state.get("sensex_cash") or ""],
                 ["Cash Ratio", state.get("cash_ratio") or ""],
+                ["BankNifty Cash", state.get("banknifty_cash") or ""],
+                ["Bankex Cash", state.get("bankex_cash") or ""],
             ]
             body = {"values": values}
             service.spreadsheets().values().update(
@@ -126,6 +132,8 @@ def _broadcast_state() -> None:
         "nifty_cash": state["nifty_cash"],
         "sensex_cash": state["sensex_cash"],
         "cash_ratio": state["cash_ratio"],
+        "banknifty_cash": state["banknifty_cash"],
+        "bankex_cash": state["bankex_cash"],
     }
     socketio.emit("state", payload)
     _push_state_to_sheets()
@@ -170,9 +178,11 @@ def _on_feed_data(meta: dict, feed: GrowwFeed) -> None:
         if sf is not None:
             state["sensex_fut"] = round(sf, 2)
             updated = True
-        if nf is not None and sf is not None:
-            state["fut_ratio"] = round(sf / nf, 4)
-            updated = True
+        # Compute ratio using latest values (current tick or stored state)
+        cur_nf = state["nifty_fut"]
+        cur_sf = state["sensex_fut"]
+        if cur_nf is not None and cur_sf is not None:
+            state["fut_ratio"] = round(cur_sf / cur_nf, 4)
         if updated:
             _broadcast_state()
 
@@ -182,10 +192,40 @@ def _on_feed_data(meta: dict, feed: GrowwFeed) -> None:
             return
         nc = _extract_index_value(idx_data, NIFTY_INDEX)
         sc = _extract_index_value(idx_data, SENSEX_INDEX)
-        if nc is not None and sc is not None:
+        bnc = _extract_index_value(idx_data, BANKNIFTY_INDEX)
+        bxc = _extract_index_value(idx_data, BANKEX_INDEX)
+        # One-time debug: log all available index tokens
+        if state.get("_idx_debug") is None:
+            state["_idx_debug"] = True
+            for ex_name in ("NSE", "BSE"):
+                ex_data = idx_data.get(ex_name) or {}
+                for seg_name, seg_data in ex_data.items():
+                    if isinstance(seg_data, dict):
+                        _log_feed(f"INDEX tokens {ex_name}/{seg_name}: {list(seg_data.keys())}")
+                        # Show raw data for our banking indices
+                        for tok_key in ("NIFTY BANK", "12"):
+                            if tok_key in seg_data:
+                                _log_feed(f"  {ex_name}/{seg_name}/{tok_key} = {seg_data[tok_key]}")
+            _log_feed(f"bnc={bnc}, bxc={bxc}")
+        updated = False
+        if nc is not None:
             state["nifty_cash"] = round(nc, 2)
+            updated = True
+        if sc is not None:
             state["sensex_cash"] = round(sc, 2)
-            state["cash_ratio"] = round(sc / nc, 4)
+            updated = True
+        if bnc is not None:
+            state["banknifty_cash"] = round(bnc, 2)
+            updated = True
+        if bxc is not None:
+            state["bankex_cash"] = round(bxc, 2)
+            updated = True
+        # Compute ratio using latest values (current tick or stored state)
+        cur_nc = state["nifty_cash"]
+        cur_sc = state["sensex_cash"]
+        if cur_nc is not None and cur_sc is not None:
+            state["cash_ratio"] = round(cur_sc / cur_nc, 4)
+        if updated:
             _broadcast_state()
 
 
@@ -251,6 +291,74 @@ def _log_feed(msg: str) -> None:
     print(f"[feed] {msg}", file=sys.stderr, flush=True)
 
 
+def _fetch_initial_ltp(groww: GrowwAPI) -> None:
+    """Fetch initial LTP via REST API while websocket feed warms up.
+    BSE feed can take several seconds before it starts streaming Sensex FUT data.
+    This polls via HTTP to populate state immediately.
+    """
+    MAX_ATTEMPTS = 15  # up to ~30 seconds (2s interval)
+    all_instruments = [NIFTY_FUT_INSTRUMENT] + SENSEX_FUT_INSTRUMENTS
+    for attempt in range(MAX_ATTEMPTS):
+        # Stop if both futures are already populated by the websocket feed
+        if state["nifty_fut"] is not None and state["sensex_fut"] is not None:
+            _log_feed("REST fallback: both prices already populated by feed, stopping")
+            return
+        for inst in all_instruments:
+            sym = inst.get("trading_symbol", "")
+            exchange = inst["exchange"]
+            if not sym:
+                continue
+            # Skip if this instrument's value is already populated
+            if exchange == "NSE" and inst is NIFTY_FUT_INSTRUMENT and state["nifty_fut"] is not None:
+                continue
+            if inst in SENSEX_FUT_INSTRUMENTS and state["sensex_fut"] is not None:
+                continue
+            try:
+                exchange_sym = f"{exchange}_{sym}"
+                result = groww.get_ltp(
+                    exchange_trading_symbols=(exchange_sym,),
+                    segment="FNO",
+                    timeout=5,
+                )
+                _log_feed(f"REST fallback attempt {attempt+1}: {exchange_sym} -> {result}")
+                if result and isinstance(result, dict):
+                    # Try to extract LTP from REST response
+                    ltp = None
+                    if exchange_sym in result:
+                        val = result[exchange_sym]
+                        if isinstance(val, dict):
+                            ltp = val.get("ltp") or val.get("lastPrice") or val.get("last_price")
+                        elif isinstance(val, (int, float)):
+                            ltp = val
+                    # Also try nested format
+                    if ltp is None:
+                        for key, val in result.items():
+                            if isinstance(val, dict):
+                                ltp = val.get("ltp") or val.get("lastPrice") or val.get("last_price")
+                            elif isinstance(val, (int, float)):
+                                ltp = val
+                            if ltp is not None:
+                                break
+                    if ltp is not None:
+                        ltp = round(float(ltp), 2)
+                        if inst is NIFTY_FUT_INSTRUMENT and state["nifty_fut"] is None:
+                            state["nifty_fut"] = ltp
+                            _log_feed(f"REST fallback: set nifty_fut={ltp}")
+                        elif inst in SENSEX_FUT_INSTRUMENTS and state["sensex_fut"] is None:
+                            state["sensex_fut"] = ltp
+                            _log_feed(f"REST fallback: set sensex_fut={ltp}")
+                        # Update ratio if both are available
+                        cur_nf = state["nifty_fut"]
+                        cur_sf = state["sensex_fut"]
+                        if cur_nf is not None and cur_sf is not None:
+                            state["fut_ratio"] = round(cur_sf / cur_nf, 4)
+                        _broadcast_state()
+            except Exception as e:
+                _log_feed(f"REST fallback error for {sym}: {e}")
+        time.sleep(2)
+    _log_feed("REST fallback: exhausted attempts")
+
+
 def _run_feed() -> None:
     global _feed
     try:
@@ -273,7 +381,13 @@ def _run_feed() -> None:
         feed.subscribe_index_value(INDEX_INSTRUMENTS, on_data_received=callback)
         _log_feed("subscribed index_value, subscribing LTP...")
         feed.subscribe_ltp(FUT_INSTRUMENTS, on_data_received=callback)
-        _log_feed("subscribed LTP, consuming...")
+        _log_feed("subscribed LTP, starting REST fallback for initial data...")
+        # Start a background thread to fetch initial LTP via REST API
+        # while the websocket feed warms up (BSE feed can be slow)
+        threading.Thread(
+            target=_fetch_initial_ltp, args=(groww,), daemon=True
+        ).start()
+        _log_feed("consuming...")
         feed.consume()
     except Exception as e:
         msg = str(e).strip() or repr(e)
